@@ -248,6 +248,26 @@ own install journal. A base URL you pinned yourself is your endpoint, so Caveman
 names the file and the value instead of rewriting them, and Remote Control stays
 refused until you change it.
 
+The base URL is not the only gate, and the lift addresses only that one. Read
+out of the Claude Code 2.1.247 binary, Remote Control also requires:
+
+- **First-party auth.** Bedrock, Vertex, Foundry, Mantle, and an enterprise
+  cloud gateway login each disable Remote Control on their own.
+- **A session that is not API-key-authed.** `ANTHROPIC_API_KEY`,
+  `ANTHROPIC_AUTH_TOKEN`, or an `apiKeyHelper` disables it; Claude Code asks you
+  to unset them.
+
+So a routed session whose credentials are an API key still has no Remote
+Control after the route is lifted, and that is not something Caveman can
+change.
+
+The base-URL check itself compares the host rather than testing whether the
+variable is set, so an explicit `ANTHROPIC_BASE_URL=https://api.anthropic.com`
+passes it — which is what makes the lift work. It also means the
+`_CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL=1` that `caveman enable claude` leaves
+in the same `env` block is inert here rather than fatal: it does not satisfy
+this check, but it does not trip it either.
+
 Remote Control started from the Claude desktop app, or from a plain
 `claude --remote-control` that never passes through Caveman, is out of reach of
 all of this. There, run `caveman disable claude` first and `caveman enable
