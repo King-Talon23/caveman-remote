@@ -12747,17 +12747,28 @@ function qwenRouteOverride(agent: AgentProfile, args: string[]): AgentRouteOverr
 
 const ANTHROPIC_FIRST_PARTY_HOST = "api.anthropic.com";
 
-// Claude Code ships no `remote-control` subcommand: Remote Control is the
-// `--remote-control [name]` flag, so the original bare-token match never fired
-// on the spelling a user actually types, and every such session routed into the
-// proxy and was refused. The bare token stays matched so a host that did ship
-// one keeps the bypass it already had. Exact matches only —
-// `--remote-control-session-name-prefix` names a session without turning Remote
-// Control on, and must keep routing.
+// Claude Code reaches Remote Control three ways, and the original
+// `args.includes("remote-control")` caught only one of them. Read out of the
+// 2.1.247 binary:
+//
+//   r.command("remote-control",{hidden:!0}).alias("rc")
+//
+// so the subcommand is real but HIDDEN — absent from `claude --help` — it
+// answers to `rc` as well, and `--remote-control [name]` is a separate flag.
+// The old match handled `claude remote-control` and missed both `rc` and the
+// flag, which is the spelling the help text actually advertises.
+//
+// A subcommand is only a subcommand in first position: `claude -p rc` is a
+// prompt, and matching it would silently unroute an ordinary session, costing
+// compression and metering with nothing on screen to say why. Flags match
+// anywhere. Failing to match merely leaves Claude Code to print its own clear
+// refusal, so this errs toward routing. `--remote-control-session-name-prefix`
+// names a session without turning Remote Control on, and must keep routing.
 function claudeRemoteControlRequested(args: string[]): boolean {
+  if (args[0] === "remote-control" || args[0] === "rc") return true;
   for (const arg of args) {
     if (arg === "--") break;
-    if (arg === "remote-control" || arg === "--remote-control") return true;
+    if (arg === "--remote-control") return true;
     if (arg.startsWith("--remote-control=")) return true;
   }
   return false;

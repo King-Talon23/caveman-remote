@@ -918,10 +918,9 @@ test("Remote Control is recognised by the flag Claude Code actually ships (#947)
   const here = dirname(fileURLToPath(import.meta.url));
   const { buildWrapEnv } = await import(`${pathToFileURL(join(here, "..", "dist", "index.js")).href}?claude-remote-control-flag`);
   const claude = PROFILES.find((profile) => profile.id === "claude");
-  // There is no `claude remote-control` subcommand on 2.1.x — Remote Control is
-  // the `--remote-control [name]` flag. The bare token stays matched for hosts
-  // that shipped one, so an older install keeps the bypass it already had.
-  for (const args of [["remote-control"], ["--remote-control"], ["--remote-control", "laptop"], ["--remote-control=laptop"]]) {
+  // Three doors, per the 2.1.247 binary: a HIDDEN `remote-control` subcommand,
+  // its `rc` alias, and the `--remote-control [name]` flag.
+  for (const args of [["remote-control"], ["rc"], ["--remote-control"], ["--remote-control", "laptop"], ["--remote-control=laptop"]]) {
     assert.throws(
       () => buildWrapEnv(claude, "http://127.0.0.1:8787", "auto", args),
       /remote-control only runs against api.anthropic.com/,
@@ -931,6 +930,12 @@ test("Remote Control is recognised by the flag Claude Code actually ships (#947)
   // Naming a session does not turn Remote Control on, so this one still routes.
   const prefixed = buildWrapEnv(claude, "http://127.0.0.1:8787", "auto", ["--remote-control-session-name-prefix", "lab"]);
   assert.equal(prefixed.ANTHROPIC_BASE_URL, "http://127.0.0.1:8787/w/claude");
+  // A subcommand only counts in first position. These are prompts, and
+  // unrouting them would drop compression and metering with nothing on screen.
+  for (const args of [["-p", "rc"], ["-p", "remote-control"]]) {
+    const prompt = buildWrapEnv(claude, "http://127.0.0.1:8787", "auto", args);
+    assert.equal(prompt.ANTHROPIC_BASE_URL, "http://127.0.0.1:8787/w/claude", `${args.join(" ")} is a prompt, not Remote Control`);
+  }
 });
 
 test("a native Caveman route is lifted for one Remote Control launch, on the command line only (#947)", async () => {

@@ -218,12 +218,16 @@ Claude Code 2.1.196 and later only allows Remote Control when
 hatch does not cover this check. A proxied session therefore cannot start
 Remote Control.
 
-Remote Control is the `--remote-control [name]` flag, not a subcommand.
-`caveman claude --remote-control` and `caveman wrap claude --remote-control`
-detect it and launch Claude Code directly, uncompressed. The bare token
-`remote-control` stays matched for a host that shipped it as a subcommand.
-`--remote-control-session-name-prefix` does not match, because naming a session
-does not turn Remote Control on.
+Claude Code reaches Remote Control three ways: a hidden `remote-control`
+subcommand, its `rc` alias, and the `--remote-control [name]` flag. The
+subcommand is registered with `hidden: true`, so it does not appear in
+`claude --help` even though it works. Caveman detects all three and launches
+Claude Code directly, uncompressed.
+
+The subcommand and its alias count only in first position, because `claude -p rc`
+is a prompt rather than a Remote Control session, and unrouting it would cost
+compression and metering silently. `--remote-control-session-name-prefix` never
+matches: naming a session does not turn Remote Control on.
 
 Launching directly is not enough by itself. A launch that routes nothing still
 strips the gateway URLs out of the child environment, and on Claude Code 2.1.247
