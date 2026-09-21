@@ -5473,6 +5473,20 @@ async function spawnWrapped(
       if (value !== undefined && (value === gw || value.startsWith(gwPrefix))) delete env[k];
     }
   }
+  // Clearing the environment above is not enough here — it is the trigger. A
+  // settings-file `env` entry fills a variable the environment lacks, so deleting
+  // the gateway URL lets a persistent `caveman enable claude` route take the slot
+  // and Remote Control stays refused. See claudeRemoteControlEscape for why the
+  // lift has to happen on the command line.
+  if (direct && agent?.id === "claude" && routeOverride?.surface === "remote-control") {
+    const escape = claudeRemoteControlEscape();
+    if (escape.kind === "override") {
+      childArgs = [...escape.args, ...childArgs];
+      process.stderr.write(dim(`  Remote Control: ${escape.file} routes Claude Code to ${escape.route}; lifted for this launch only, the file is untouched`) + "\n");
+    } else if (escape.kind === "foreign") {
+      process.stderr.write(`${mark("warn")} Remote Control will still be refused: ${escape.file} pins ANTHROPIC_BASE_URL to ${escape.route}, which Caveman does not own and will not rewrite\n`);
+    }
+  }
   // Only a local proxy session that survived native-pack setup can produce a
   // session-end savings summary. Direct fallback never claims routed work.
   let summaryKind: "observe" | "compress" | undefined;
@@ -8392,6 +8406,14 @@ function enableNative(argv: string[]) {
       process.stderr.write(`caveman enable ${agent}: planned user-scoped writes\n`);
       for (const mutation of mutations) process.stderr.write(`  ${mutation.kind}: ${mutation.file}\n`);
       if (typeof route === "string") process.stderr.write(`  routing: ${route}\n`);
+      // Claude Code turns Remote Control off whenever ANTHROPIC_BASE_URL names a
+      // host other than api.anthropic.com, and its first-party escape hatch does
+      // not cover that check. Say so where the route is written, not only in the
+      // uninstall notes, or the feature disappears with no cause on screen.
+      if (agent === "claude" && typeof route === "string") {
+        process.stderr.write("  Claude Code Remote Control: off while this route is in settings.json\n");
+        process.stderr.write(`    ${invokedAs()} claude --remote-control  starts one with the route lifted for that session\n`);
+      }
       process.stderr.write(agent === "aider" ? "  recovery MCP: unavailable in Aider\n" : `  recovery MCP: ${mcpBinary}\n`);
       process.stderr.write(agent === "aider"
         ? `  Core: read-only ${aiderCorePath()}; lifecycle/tool interception unavailable; Ledger observational\n`
@@ -12723,12 +12745,95 @@ function qwenRouteOverride(agent: AgentProfile, args: string[]): AgentRouteOverr
   return null;
 }
 
+const ANTHROPIC_FIRST_PARTY_HOST = "api.anthropic.com";
+
+// Claude Code ships no `remote-control` subcommand: Remote Control is the
+// `--remote-control [name]` flag, so the original bare-token match never fired
+// on the spelling a user actually types, and every such session routed into the
+// proxy and was refused. The bare token stays matched so a host that did ship
+// one keeps the bypass it already had. Exact matches only —
+// `--remote-control-session-name-prefix` names a session without turning Remote
+// Control on, and must keep routing.
+function claudeRemoteControlRequested(args: string[]): boolean {
+  for (const arg of args) {
+    if (arg === "--") break;
+    if (arg === "remote-control" || arg === "--remote-control") return true;
+    if (arg.startsWith("--remote-control=")) return true;
+  }
+  return false;
+}
+
+function isFirstPartyAnthropicBaseUrl(value: unknown): boolean {
+  if (typeof value !== "string" || !value.trim()) return false;
+  try { return new URL(value).host === ANTHROPIC_FIRST_PARTY_HOST; } catch { return false; }
+}
+
+// claudeSettingsBaseUrlPin reports a settings file that sends Claude Code
+// somewhere other than the first-party host, or null when it says nothing on
+// the subject. An unreadable or malformed file counts as saying nothing: this
+// feeds a convenience escape, and guessing at bytes we cannot parse is worse
+// than leaving the user with Claude Code's own error message.
+function claudeSettingsBaseUrlPin(file: string): { file: string; route: string } | null {
+  const bytes = fileBytes(file);
+  if (!bytes) return null;
+  let root: Record<string, unknown>;
+  try { root = parseJsonFileObject(file, bytes); } catch { return null; }
+  const env = root.env && typeof root.env === "object" && !Array.isArray(root.env) ? root.env as Record<string, unknown> : {};
+  const route = env.ANTHROPIC_BASE_URL;
+  if (typeof route !== "string" || !route.trim()) return null;
+  return isFirstPartyAnthropicBaseUrl(route) ? null : { file, route };
+}
+
+export type ClaudeRemoteControlEscape =
+  | { kind: "none" }
+  | { kind: "override"; args: string[]; file: string; route: string }
+  | { kind: "foreign"; file: string; route: string };
+
+// Clearing ANTHROPIC_BASE_URL out of a child's environment does NOT undo a
+// `caveman enable claude` route living in settings.json — the deletion is what
+// ACTIVATES it. Measured on Claude Code 2.1.247: a settings-file `env` entry
+// supplies a variable the environment does not already carry, and loses to an
+// inherited value when it does. So the direct launch #947 added, which strips
+// the gateway URLs from the child environment, hands the settings route an
+// empty slot to fill; the child lands on the proxy and Remote Control is still
+// refused.
+//
+// Command-line settings outrank both the user and the project files, and `env`
+// merges per key rather than replacing the block, so handing the first-party
+// host back on the command line fixes exactly one variable for one child and
+// leaves every other entry the user keeps there intact. Nothing on disk
+// changes, and other live sessions keep their route.
+//
+// Only a route Caveman owns is lifted. A base URL the user pinned themselves is
+// their own endpoint; rewriting it would misreport their configuration to the
+// agent, so that case is named rather than overridden. Both project files are
+// read because either one outranks the user file we journaled.
+export function claudeRemoteControlEscape(cwd: string = process.cwd()): ClaudeRemoteControlEscape {
+  const pins = [
+    claudeSettingsPath(),
+    join(cwd, ".claude", "settings.json"),
+    join(cwd, ".claude", "settings.local.json"),
+  ]
+    .map(claudeSettingsBaseUrlPin)
+    .filter((pin): pin is { file: string; route: string } => pin !== null);
+  if (pins.length === 0) return { kind: "none" };
+  const owned = nativeRoutePinnedFor("claude")?.route;
+  const foreign = pins.find((pin) => pin.route !== owned);
+  if (foreign) return { kind: "foreign", file: foreign.file, route: foreign.route };
+  return {
+    kind: "override",
+    args: ["--settings", JSON.stringify({ env: { ANTHROPIC_BASE_URL: `https://${ANTHROPIC_FIRST_PARTY_HOST}` } })],
+    file: pins[0]!.file,
+    route: pins[0]!.route,
+  };
+}
+
 function agentRouteOverride(agent: AgentProfile, args: string[]): AgentRouteOverride | null {
   if (agent.id === "kilo") return kiloRouteOverride(agent, args);
   if (agent.id === "qwen") return qwenRouteOverride(agent, args);
   // Claude Code 2.1.196+ refuses Remote Control unless ANTHROPIC_BASE_URL is
   // api.anthropic.com, and the first-party escape hatch does not apply (#947).
-  if (agent.id === "claude" && args.includes("remote-control")) {
+  if (agent.id === "claude" && claudeRemoteControlRequested(args)) {
     return { surface: "remote-control", reason: "only runs against api.anthropic.com, so it cannot route through the proxy" };
   }
   return null;

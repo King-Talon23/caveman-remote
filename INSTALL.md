@@ -263,7 +263,7 @@ to run; reinstall the CLI, run `caveman disable --all`, then remove it again.
 
 What it removes:
 
-- Native agent routing written by `caveman setup --install` / `caveman enable <agent>` — for Claude Code that is `ANTHROPIC_BASE_URL` and `_CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL` in `~/.claude/settings.json`, which is what makes [Claude Code Remote Control](docs/technical/agent-wrapping.md) unavailable while Caveman is routing. Restored from each agent's integration journal, so your own prior value comes back.
+- Native agent routing written by `caveman setup --install` / `caveman enable <agent>` — for Claude Code that is `ANTHROPIC_BASE_URL` and `_CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL` in `~/.claude/settings.json`. That route is what turns [Claude Code Remote Control](docs/technical/agent-wrapping.md) off; `caveman claude --remote-control` lifts it for one session without removing it. Restored from each agent's integration journal, so your own prior value comes back.
 - Caveman hook entries from `$CLAUDE_CONFIG_DIR/settings.json` (default `~/.claude/`; matched by the substring `caveman`).
 - Hook files in `$CLAUDE_CONFIG_DIR/hooks/` (`caveman-activate.js`, `caveman-mode-tracker.js`, `caveman-parse.js`, `caveman-stats.js`, `caveman-config.js`, `cavecrew-model-overrides.js`, `caveman-statusline.{sh,ps1}`, plus the dir's `package.json` marker).
 - The Claude Code plugin and the Gemini CLI extension (if installed).

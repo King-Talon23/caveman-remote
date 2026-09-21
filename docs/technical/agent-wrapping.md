@@ -216,9 +216,39 @@ smaller safe output, Caveman sends original input.
 Claude Code 2.1.196 and later only allows Remote Control when
 `ANTHROPIC_BASE_URL` points at `api.anthropic.com`; its first-party escape
 hatch does not cover this check. A proxied session therefore cannot start
-Remote Control. `caveman claude remote-control` and
-`caveman wrap claude remote-control` detect the subcommand and launch Claude
-Code directly, uncompressed. If `caveman enable claude` has written the route
-into `settings.json`, run `caveman disable claude` before starting a Remote
-Control session from a plain `claude` command, then `caveman enable claude`
-again afterwards.
+Remote Control.
+
+Remote Control is the `--remote-control [name]` flag, not a subcommand.
+`caveman claude --remote-control` and `caveman wrap claude --remote-control`
+detect it and launch Claude Code directly, uncompressed. The bare token
+`remote-control` stays matched for a host that shipped it as a subcommand.
+`--remote-control-session-name-prefix` does not match, because naming a session
+does not turn Remote Control on.
+
+Launching directly is not enough by itself. A launch that routes nothing still
+strips the gateway URLs out of the child environment, and on Claude Code 2.1.247
+a settings file's `env` entry supplies any variable the environment does not
+already carry. So that strip is what lets a route written by
+`caveman enable claude` take effect, and Remote Control stays refused.
+
+Command-line settings outrank every settings file, and `env` merges per key
+rather than replacing the block, so both commands above also pass
+`--settings '{"env":{"ANTHROPIC_BASE_URL":"https://api.anthropic.com"}}'`. That
+corrects one variable for one child; every other entry in your `env` block is
+still applied. `settings.json` is never rewritten, and other live sessions keep
+their route.
+
+Precedence between an inherited environment variable and a settings file runs
+the other way: a value already exported in your shell wins over both settings
+files. Caveman's direct launch removes its own gateway URLs from that
+environment, which is why the settings file gets the last word here.
+
+Caveman lifts only a route it owns — one that matches the route recorded in its
+own install journal. A base URL you pinned yourself is your endpoint, so Caveman
+names the file and the value instead of rewriting them, and Remote Control stays
+refused until you change it.
+
+Remote Control started from the Claude desktop app, or from a plain
+`claude --remote-control` that never passes through Caveman, is out of reach of
+all of this. There, run `caveman disable claude` first and `caveman enable
+claude` afterwards.

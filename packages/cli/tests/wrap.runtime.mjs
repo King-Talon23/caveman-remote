@@ -914,6 +914,90 @@ test("Claude remote-control launches direct because Claude Code refuses a proxie
   assert.equal(env.ANTHROPIC_BASE_URL, "http://127.0.0.1:8787/w/claude");
 });
 
+test("Remote Control is recognised by the flag Claude Code actually ships (#947)", async () => {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const { buildWrapEnv } = await import(`${pathToFileURL(join(here, "..", "dist", "index.js")).href}?claude-remote-control-flag`);
+  const claude = PROFILES.find((profile) => profile.id === "claude");
+  // There is no `claude remote-control` subcommand on 2.1.x — Remote Control is
+  // the `--remote-control [name]` flag. The bare token stays matched for hosts
+  // that shipped one, so an older install keeps the bypass it already had.
+  for (const args of [["remote-control"], ["--remote-control"], ["--remote-control", "laptop"], ["--remote-control=laptop"]]) {
+    assert.throws(
+      () => buildWrapEnv(claude, "http://127.0.0.1:8787", "auto", args),
+      /remote-control only runs against api.anthropic.com/,
+      `${args.join(" ")} must bypass the proxy`,
+    );
+  }
+  // Naming a session does not turn Remote Control on, so this one still routes.
+  const prefixed = buildWrapEnv(claude, "http://127.0.0.1:8787", "auto", ["--remote-control-session-name-prefix", "lab"]);
+  assert.equal(prefixed.ANTHROPIC_BASE_URL, "http://127.0.0.1:8787/w/claude");
+});
+
+test("a native Caveman route is lifted for one Remote Control launch, on the command line only (#947)", async () => {
+  const { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const here = dirname(fileURLToPath(import.meta.url));
+  const { claudeRemoteControlEscape } = await import(`${pathToFileURL(join(here, "..", "dist", "index.js")).href}?claude-remote-control-escape`);
+
+  const root = mkdtempSync(join(tmpdir(), "cave-rc-escape-"));
+  const claudeDir = join(root, "claude-config");
+  const cavemanDir = join(root, "caveman-home");
+  // A project directory with no .claude of its own: the pin under test must be
+  // the user-scoped one, not a project file this repo happens to carry.
+  const work = join(root, "work");
+  mkdirSync(claudeDir, { recursive: true });
+  mkdirSync(work, { recursive: true });
+  mkdirSync(join(cavemanDir, "integrations"), { recursive: true });
+  const settingsPath = join(claudeDir, "settings.json");
+  const route = "http://127.0.0.1:8787/w/claude";
+  const writeSettings = (baseUrl) =>
+    writeFileSync(settingsPath, JSON.stringify({ env: { ANTHROPIC_BASE_URL: baseUrl } }, null, 2));
+  const writeJournal = (owned) =>
+    writeFileSync(join(cavemanDir, "integrations", "claude.json"), JSON.stringify({
+      schema_version: 1,
+      agent: "claude",
+      pack_version: "test",
+      installed_at: new Date().toISOString(),
+      detected_agent_version: null,
+      operations: [{ file: settingsPath, kind: "claude-settings", backup: "", before_exists: false, before_sha256: null, after_sha256: "", owned }],
+    }));
+
+  const saved = { claude: process.env.CLAUDE_CONFIG_DIR, cave: process.env.CAVEMAN_HOME };
+  process.env.CLAUDE_CONFIG_DIR = claudeDir;
+  process.env.CAVEMAN_HOME = cavemanDir;
+  try {
+    // A route Caveman owns: lifted for this child through --settings, which
+    // outranks the user settings file, leaving that file byte-identical.
+    writeSettings(route);
+    writeJournal({ route });
+    const before = readFileSync(settingsPath, "utf8");
+    const lifted = claudeRemoteControlEscape(work);
+    assert.equal(lifted.kind, "override");
+    assert.equal(lifted.args[0], "--settings");
+    assert.deepEqual(JSON.parse(lifted.args[1]), { env: { ANTHROPIC_BASE_URL: "https://api.anthropic.com" } });
+    assert.equal(readFileSync(settingsPath, "utf8"), before, "the escape must not rewrite settings.json");
+
+    // A route Caveman does not own is the user's own proxy. Rewriting it would
+    // misrepresent their config, so say what blocks Remote Control instead.
+    writeSettings("https://proxy.internal/anthropic");
+    const foreign = claudeRemoteControlEscape(work);
+    assert.equal(foreign.kind, "foreign");
+    assert.equal(foreign.route, "https://proxy.internal/anthropic");
+
+    // Already first-party, or absent: nothing to lift, so no flag is injected.
+    writeSettings("https://api.anthropic.com");
+    assert.equal(claudeRemoteControlEscape(work).kind, "none");
+    writeFileSync(settingsPath, JSON.stringify({}));
+    assert.equal(claudeRemoteControlEscape(work).kind, "none");
+  } finally {
+    for (const [key, value] of [["CLAUDE_CONFIG_DIR", saved.claude], ["CAVEMAN_HOME", saved.cave]]) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("a corporate HTTPS_PROXY does not swallow the agent's loopback hop (#1001)", async () => {
   const here = dirname(fileURLToPath(import.meta.url));
   const { buildWrapEnv } = await import(`${pathToFileURL(join(here, "..", "dist", "index.js")).href}?gateway-no-proxy`);

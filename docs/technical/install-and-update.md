@@ -174,7 +174,8 @@ npm uninstall -g @caveman-ai/cli
 
 Reversed, the native route survives — for Claude Code that leaves
 `ANTHROPIC_BASE_URL` and `_CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL` in
-`~/.claude/settings.json` and Remote Control unavailable (see
+`~/.claude/settings.json` and Remote Control off for a plain `claude`
+invocation (`caveman claude --remote-control` still starts one; see
 [agent wrapping](agent-wrapping.md)). The installer names any agent still routed
 when it finds one; recover with `caveman disable --all` after reinstalling the
 CLI, or delete those two keys by hand.
